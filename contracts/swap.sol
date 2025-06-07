@@ -23,5 +23,5 @@ contract Swap is Ownable {
     function receiveETHFromInvestors() public payable {
         totalETH += msg.value;
     }
-      function swap() 
+      
 }
