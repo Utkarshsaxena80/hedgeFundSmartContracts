@@ -1,6 +1,6 @@
 //SPDX-License-Identifier: MIT
 pragma solidity ^0.8.8;
-
+///////--->0x36CD2dafc9149B2dea2497B299D34f9D5478569B
 import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
 import {AutomationCompatibleInterface} from "@chainlink/contracts/src/v0.8/automation/AutomationCompatible.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
@@ -54,7 +54,7 @@ contract HedgeFund is Ownable, AutomationCompatibleInterface {
     }
 
     function getToken() public {
-        i_token.mint(address(this), 1000000);
+        i_token.mint(address(this), 1000000* 10**i_token.decimals());
         tokenReserve += 1000000;
     }
 
@@ -116,7 +116,9 @@ contract HedgeFund is Ownable, AutomationCompatibleInterface {
     {
         int256 price = getChainlinkDataFeedLatestAnswer();
         address[] memory usersToSwap = new address[](userAddresses.length);
+        address[] memory usersToUnhedge = new address[](userAddresses.length);
         uint256 matchCount = 0;
+        uint256 unhedgeCount=0;
         for (uint256 i = 0; i < userAddresses.length; i++){
             address userAddr = userAddresses[i];
             UserInfo memory user = userInfo[userAddr];
@@ -130,22 +132,41 @@ contract HedgeFund is Ownable, AutomationCompatibleInterface {
                 matchCount++;
             }
           }
+           else if(user.isRegisteredForHedging){
+            isHedging memory hedger = hedgeHistory[userAddr];
+            if(hedger.isHedging) {
+               
+                int256 hedgePrice = int256(hedger.valueAtHedge);
+                int256 recoveryThreshold = hedgePrice + ((hedgePrice * int256(uint256(user.tolerance))) / 100);
+                
+                if (price > recoveryThreshold) {
+                    usersToUnhedge[unhedgeCount] = userAddr;
+                    unhedgeCount++;
+                }
+            }
         }
-        for (uint256 i = 0; i < userAddresses.length; i++) {}
-        upkeepNeeded = matchCount > 0;
+                  
+         upkeepNeeded = (matchCount > 0) || (unhedgeCount > 0);
         if (upkeepNeeded) {
             address[] memory filtered = new address[](matchCount);
-            for (uint i = 0; i < matchCount; i++) {
-                filtered[i] = usersToSwap[i];
+            address[] memory filteredUnhedge = new address[](unhedgeCount);
+            for (uint ii = 0; i < matchCount; ii++) {
+                filtered[ii] = usersToSwap[ii];
             }
-            performData = abi.encode(filtered);
-        } else {
-            performData = "";
+              for (uint iii = 0; iii < unhedgeCount; iii++) {
+            filteredUnhedge[iii] = usersToUnhedge[iii];
+        }
+            performData = abi.encode(filtered,filteredUnhedge);
+            } else {
+                performData = "";
+            }
         }
     }
+    
+        function performUpkeep(bytes calldata performData) external {
+       (address[] memory usersToSwap, address[] memory usersToUnhedge) = 
+        abi.decode(performData, (address[], address[]));
 
-    function performUpkeep(bytes calldata performData) external {
-        address[] memory usersToSwap = abi.decode(performData, (address[]));
         for (uint i = 0; i < usersToSwap.length; i++) {
             address user = usersToSwap[i];
             UserInfo storage user1 = userInfo[user];
@@ -188,6 +209,23 @@ contract HedgeFund is Ownable, AutomationCompatibleInterface {
                 user1.value -= (newVaule * 30) / 100;
             }
         }
+        for (uint i = 0; i < usersToUnhedge.length; i++) {
+        address user = usersToUnhedge[i];
+        isHedging storage hedger = hedgeHistory[user];
+        UserInfo storage userInfo1 = userInfo[user];
+        
+        if (hedger.isHedging && hedger.hedgeAmount > 0) {
+            uint256 userTokenBalance = i_token.balanceOf(user);
+            swapTokenToEth(/*user,*/userTokenBalance);
+            if (userTokenBalance > 0) {
+                hedger.isHedging = false;
+                hedger.hedgeAmount = 0;
+                hedger.valueAtHedge = 0;
+                userInfo1.isRegisteredForHedging = false;
+                userInfo1.lastPrice = int128(getChainlinkDataFeedLatestAnswer());
+            }
+        }
+    }
     }
 
     function swapEthToToken(address user, uint256 eth) internal {
@@ -203,14 +241,10 @@ contract HedgeFund is Ownable, AutomationCompatibleInterface {
         i_token.transfer(user, tokensOut);
         emit ethSwapped(tokensOut);
     }
-     function swapTokenToEth(uint256 tokenIn) external  {
+     function swapTokenToEth(/*address user,*/uint256 tokenIn) internal  {
         require(tokenIn > 0, "Send tokens to swap");
-        // if(i_token.balanceOf(msg.sender)>0){
-        //     i_token.approve(msg.sender, i_token.balanceOf(msg.sender));
-        //     //_transferOwnershipemit userApprovedToSwap(msg.sender);
-        // }
-
         i_token.transferFrom(msg.sender, address(this), tokenIn);
+        //////---->APPROVE THE TOKEN TO IN THE FRONTEND
 
         uint256 tokenInWithFee = tokenIn * 997 / 1000;
 
